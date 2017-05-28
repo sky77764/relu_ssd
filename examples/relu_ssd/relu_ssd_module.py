@@ -11,6 +11,173 @@ import stat
 import subprocess
 import sys
 
+def Res3Block(net, from_layer, deconv_layer, block_name, 
+        use_branch, branch_param):
+    res_layer = []
+    if use_branch[0]:
+        branch1 = ResBranch(net, from_layer, block_name, "branch1", branch_param[0])
+        res_layer.append(net[branch1])
+    else:
+        res_layer.append(net[from_layer])
+
+    if use_branch[1]:
+        branch2 = ResBranch(net, from_layer, block_name, "branch2", branch_param[1])
+        res_layer.append(net[branch2])
+    
+    if use_branch[2]:
+        branch3 = ResBranch(net, deconv_layer, block_name, "branch3", branch_param[2])
+        res_layer.append(net[branch3])
+
+    
+    res_name = 'res{}'.format(block_name)
+        
+    if len(res_layer) != 1:
+        net[res_name] = L.Eltwise(*res_layer)
+        relu_name = '{}_relu'.format(res_name)
+        net[relu_name] = L.ReLU(net[res_name], in_place=True)
+    else:
+        relu_name = '{}_relu'.format(res_name)
+        net[relu_name] = L.ReLU(net[res_layer[0]], in_place=True)
+
+    return relu_name
+
+def DeconvBNLayer(net, from_layer, out_layer, use_bn, use_relu, num_output,
+    kernel_size, pad, stride, dilation=1, use_scale=True, lr_mult=1,
+    conv_prefix='', conv_postfix='', bn_prefix='', bn_postfix='_bn',
+    scale_prefix='', scale_postfix='_scale', bias_prefix='', bias_postfix='_bias',
+    **bn_params):
+  if use_bn:
+    # parameters for convolution layer with batchnorm.
+    kwargs = {
+        'param': [dict(lr_mult=lr_mult, decay_mult=1)],
+        'weight_filler': dict(type='gaussian', std=0.01),
+        'bias_term': False,
+        }
+    eps = bn_params.get('eps', 0.001)
+    moving_average_fraction = bn_params.get('moving_average_fraction', 0.999)
+    use_global_stats = bn_params.get('use_global_stats', False)
+    # parameters for batchnorm layer.
+    bn_kwargs = {
+        'param': [
+            dict(lr_mult=0, decay_mult=0),
+            dict(lr_mult=0, decay_mult=0),
+            dict(lr_mult=0, decay_mult=0)],
+        'eps': eps,
+        'moving_average_fraction': moving_average_fraction,
+        }
+    bn_lr_mult = lr_mult
+    if use_global_stats:
+      # only specify if use_global_stats is explicitly provided;
+      # otherwise, use_global_stats_ = this->phase_ == TEST;
+      bn_kwargs = {
+          'param': [
+              dict(lr_mult=0, decay_mult=0),
+              dict(lr_mult=0, decay_mult=0),
+              dict(lr_mult=0, decay_mult=0)],
+          'eps': eps,
+          'use_global_stats': use_global_stats,
+          }
+      # not updating scale/bias parameters
+      bn_lr_mult = 0
+    # parameters for scale bias layer after batchnorm.
+    if use_scale:
+      sb_kwargs = {
+          'bias_term': True,
+          'param': [
+              dict(lr_mult=bn_lr_mult, decay_mult=0),
+              dict(lr_mult=bn_lr_mult, decay_mult=0)],
+          'filler': dict(type='constant', value=1.0),
+          'bias_filler': dict(type='constant', value=0.0),
+          }
+    else:
+      bias_kwargs = {
+          'param': [dict(lr_mult=bn_lr_mult, decay_mult=0)],
+          'filler': dict(type='constant', value=0.0),
+          }
+  else:
+    kwargs = {
+        'param': [
+            dict(lr_mult=lr_mult, decay_mult=1),
+            dict(lr_mult=2 * lr_mult, decay_mult=0)],
+        'weight_filler': dict(type='xavier'),
+        'bias_filler': dict(type='constant', value=0)
+        }
+
+  conv_name = '{}{}{}'.format(conv_prefix, out_layer, conv_postfix)
+  [kernel_h, kernel_w] = UnpackVariable(kernel_size, 2)
+  [pad_h, pad_w] = UnpackVariable(pad, 2)
+  [stride_h, stride_w] = UnpackVariable(stride, 2)
+  if kernel_h == kernel_w:
+    net[conv_name] = L.Deconvolution(net[from_layer], 
+        convolution_param=dict(num_output=num_output,
+        kernel_size=kernel_h, pad=pad_h, stride=stride_h,
+        weight_filler=dict(type='gaussian', std=0.01),
+        bias_term=False,),
+        param= [dict(lr_mult=lr_mult, decay_mult=1)])
+  else:
+    net[conv_name] = L.Deconvolution(net[from_layer], 
+        convolution_param = dict(num_output=num_output,
+        kernel_h=kernel_h, kernel_w=kernel_w, pad_h=pad_h, pad_w=pad_w,
+        stride_h=stride_h, stride_w=stride_w, **kwargs))
+  if dilation > 1:
+    net.update(conv_name, {'dilation': dilation})
+  if use_bn:
+    bn_name = '{}{}{}'.format(bn_prefix, out_layer, bn_postfix)
+    net[bn_name] = L.BatchNorm(net[conv_name], in_place=True, **bn_kwargs)
+    if use_scale:
+      sb_name = '{}{}{}'.format(scale_prefix, out_layer, scale_postfix)
+      net[sb_name] = L.Scale(net[bn_name], in_place=True, **sb_kwargs)
+    else:
+      bias_name = '{}{}{}'.format(bias_prefix, out_layer, bias_postfix)
+      net[bias_name] = L.Bias(net[bn_name], in_place=True, **bias_kwargs)
+  if use_relu:
+    relu_name = '{}_relu'.format(conv_name)
+    net[relu_name] = L.ReLU(net[conv_name], in_place=True)
+
+def ResBranch(net, from_layer, block_name, branch_prefix, layer_param, **bn_params):
+    conv_prefix = 'res{}_'.format(block_name)
+    conv_postfix = ''
+    bn_prefix = 'bn{}_'.format(block_name)
+    bn_postfix = ''
+    scale_prefix = 'scale{}_'.format(block_name)
+    scale_postfix = ''
+    use_scale = True
+
+    num_layers = len(layer_param)
+
+    if num_layers != 1:
+        name_postfix = ['a', 'b', 'c', 'd', 'e']
+    else:
+        name_postfix = ['']
+    id = 0
+    out_name = from_layer
+
+    for param in layer_param:
+        
+        branch_name = branch_prefix + name_postfix[id]
+        id += 1
+
+        num_output=param['out']
+        kernel_size=param['kernel_size']
+        pad=param['pad']
+        stride=param['stride']
+        use_relu= id is not num_layers
+
+        if param['name'] == 'Convolution':
+            functor = ConvBNLayer
+        elif param['name'] == 'Deconvolution':
+            functor = DeconvBNLayer
+
+        functor(net, out_name, branch_name, use_bn=True, use_relu=use_relu,
+                num_output=num_output, kernel_size=kernel_size, pad=pad, stride=stride, use_scale=use_scale,
+                conv_prefix=conv_prefix, conv_postfix=conv_postfix,
+                bn_prefix=bn_prefix, bn_postfix=bn_postfix,
+                scale_prefix=scale_prefix, scale_postfix=scale_postfix, **bn_params)
+
+        out_name = '{}{}'.format(conv_prefix, branch_name)
+        
+    return out_name
+
 # Add extra layers on top of a "base" network (e.g. VGGNet or Inception).
 def AddExtraLayers(net, use_batchnorm=True, lr_mult=1, use_conv10=False):
     use_relu = True
@@ -76,17 +243,93 @@ def AddExtraLayers(net, use_batchnorm=True, lr_mult=1, use_conv10=False):
 
     return net
 
-def AddResidualLayers(net, from_layers, out2a, out2b, out2c, use_batchnorm=True, lr_mult=1):    
+def AddResidualLayers(net, out_dim, 
+        use_branch1, use_branch2, use_branch3, use_conv3_3 = False):    
 
     out_layers = []
-    for i in range(0, len(from_layers)):
-        from_layer = from_layers[i]
-        block_name = "{}".format(i+1)       
 
-        ResBody(net, from_layer, block_name, out2a, out2b, out2c, 1, True)        
+    branch1_type1 = [{'name': "Convolution", 'out': out_dim, 'kernel_size': 1, 'pad': 0, 'stride': 1,}]
+    
+    branch2_type1 = [
+        {'name': "Convolution", 'out': out_dim/4, 'kernel_size': 1, 'pad': 0, 'stride': 1,},
+        {'name': "Convolution", 'out': out_dim/4, 'kernel_size': 3, 'pad': 1, 'stride': 1,},
+        {'name': "Convolution", 'out': out_dim, 'kernel_size': 1, 'pad': 0, 'stride': 1,}
+        ]
 
-        out_layer = "res{}_relu".format(i+1)
+    branch2_type2 = [
+        {'name': "Convolution", 'out': out_dim, 'kernel_size': 3, 'pad': 1, 'stride': 1,},
+        {'name': "Convolution", 'out': out_dim, 'kernel_size': 3, 'pad': 1, 'stride': 1,}
+        ]
+    
+    branch3_type1 = [
+        {'name': "Convolution", 'out': out_dim/4, 'kernel_size': 3, 'pad': 1, 'stride': 1,},
+        {'name': "Deconvolution", 'out': out_dim/4,},
+        {'name': "Convolution", 'out': out_dim, 'kernel_size': 1, 'pad': 0, 'stride': 1,}
+    ]
+
+    branch1_param = branch1_type1
+    branch2_param = branch2_type2
+    branch3_param = branch3_type1   
+
+    deconv_param = branch3_param[1]             
+
+    use_branch = [use_branch1, use_branch2, use_branch3]
+    branch_param = [branch1_param, branch2_param, branch3_param]
+    
+
+    out_layers = []
+
+    # 3_3  
+    if use_conv3_3:
+        from_layer = "conv3_3"
+        deconv_layer = "conv4_3"
+        block_name = "3_3"
+        deconv_param.update({'kernel_size': 2, 'pad': 0, 'stride': 2,})
+        out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)    
         out_layers.append(out_layer)
+    
+    
+    
+    from_layer = "conv4_3"
+    deconv_layer = "fc7"
+    block_name = "4_3"
+    deconv_param.update({'kernel_size': 2, 'pad': 0, 'stride': 2,})
+    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)    
+    out_layers.append(out_layer)
+
+
+    from_layer = "fc7"
+    deconv_layer = "conv6_2"
+    block_name = "fc7"
+    deconv_param.update({'kernel_size': 3, 'pad': 1, 'stride': 2,})
+    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)    
+    out_layers.append(out_layer)
+     
+    from_layer = "conv6_2"
+    deconv_layer = "conv7_2"
+    block_name = "6_2"
+    deconv_param.update({'kernel_size': 2, 'pad': 0, 'stride': 2,})
+    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)    
+    out_layers.append(out_layer)   
+
+    from_layer = "conv7_2"
+    deconv_layer = "conv8_2"
+    block_name = "7_2"
+    deconv_param.update({'kernel_size': 3, 'pad': 0, 'stride': 1,})
+    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)    
+    out_layers.append(out_layer)   
+
+    from_layer = "conv8_2"
+    deconv_layer = "conv9_2"
+    block_name = "8_2"
+    deconv_param.update({'kernel_size': 3, 'pad': 0, 'stride': 1,})
+    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)    
+    out_layers.append(out_layer)  
+
+    from_layer = "conv9_2"
+    block_name = "9_2"
+    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, [True, True, False], branch_param)    
+    out_layers.append(out_layer)     
 
     return out_layers
 
@@ -411,7 +654,7 @@ def Train(param, py_file):
 
 
     # Modify the job name if you want.
-    job_name = "RELU_SSD_{}_res{}{}".format(resize, residual_feature_depth, "_Conv3" if param['use_conv3_3'] else "")
+    job_name = param['net_name'] + "_{}_res{}{}".format(resize, residual_feature_depth, "_Conv3" if param['use_conv3_3'] else "")
     # The name of the model. Modify it if you want.
     model_name = "VGG_{}_{}".format(data_set, job_name)
 
@@ -497,20 +740,20 @@ def Train(param, py_file):
     ## conv9_2 ==> 1 x 1
     if input_dim == 300:
         # in percent %
-        min_ratio = 20
+        min_ratio = 15
         max_ratio = 90
-        step = int(math.floor((max_ratio - min_ratio) / (len(resnet_source_layers) - 2)))
+        step = int(math.floor((max_ratio - min_ratio) / (len(resnet_source_layers) - 1)))
         min_sizes = []
         max_sizes = []
         for ratio in xrange(min_ratio, max_ratio + 1, step):
             min_sizes.append(min_dim * ratio / 100.)
             max_sizes.append(min_dim * (ratio + step) / 100.)
-        min_sizes = [min_dim * 10 / 100.] + min_sizes
-        max_sizes = [min_dim * 20 / 100.] + max_sizes
+        #min_sizes = [min_dim * 10 / 100.] + min_sizes
+        #max_sizes = [min_dim * 20 / 100.] + max_sizes
 
         if use_conv3_3:
-            min_sizes = [min_dim * 5 / 100.] + min_sizes
-            max_sizes = [min_dim * 10 / 100.] + max_sizes
+            min_sizes = [min_dim * 7 / 100.] + min_sizes
+            max_sizes = [min_dim * 15 / 100.] + max_sizes
 
         steps = [8, 16, 32, 64, 100, 300]
 
@@ -671,8 +914,10 @@ def Train(param, py_file):
 
     AddExtraLayers(net, use_batchnorm, lr_mult=lr_mult, use_conv10=use_conv10)
 
-    mbox_source_layers = AddResidualLayers(net, resnet_source_layers, 
-        residual_feature_depth/4, residual_feature_depth/4, residual_feature_depth)
+    use_branch2 = param['use_res_branch2']
+    use_branch3 = param['use_res_deconv']
+
+    mbox_source_layers = AddResidualLayers(net,residual_feature_depth, True, use_branch2, use_branch3, use_conv3_3)
 
     if not param["use_unified_prediction"]:
         mbox_layers = CreateMultiBoxHead(net, data_layer='data', from_layers=mbox_source_layers,
@@ -710,8 +955,7 @@ def Train(param, py_file):
 
     AddExtraLayers(net, use_batchnorm, lr_mult=lr_mult, use_conv10=use_conv10)
 
-    mbox_source_layers = AddResidualLayers(net, resnet_source_layers, 
-        residual_feature_depth/4, residual_feature_depth/4, residual_feature_depth)
+    mbox_source_layers = AddResidualLayers(net,residual_feature_depth, True, use_branch2, use_branch3, use_conv3_3)
 
     if not param["use_unified_prediction"]:
         mbox_layers = CreateMultiBoxHead(net, data_layer='data', from_layers=mbox_source_layers,

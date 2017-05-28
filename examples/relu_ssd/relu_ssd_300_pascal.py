@@ -5,34 +5,38 @@ import relu_ssd_module as module
 if __name__ == "__main__":
     
     param = {
+        'net_name': "RELU_SSD_DECONV",
         'input_dim': 300,
         'pretrain_model': "models/VGGNet/VGG_ILSVRC_16_layers_fc_reduced.caffemodel",
-        'data_set': "VOC0712Plus",
+        'data_set': "VOC0712",
         'gpus': "0",
         'batch_size': 16,
         'accum_batch_size': 32,
         'use_batchnorm': False,
-        'use_conv3_3': True,
+        'use_conv3_3': False,
         'use_unified_prediction': True,
-        'num_test_image': 10991,
+        'num_test_image': 4952,
         'test_batch_size': 8,
         'residual_feature_depth': 256,
+        'use_res_branch2' : False,
+        'use_res_deconv' : True,
+
 
         'solver_param' : {
             # Train parameters            
             'weight_decay': 0.0005,
             'lr_policy': "multistep",
-            'stepvalue': [80000, 130000, 160000],
+            'stepvalue': [80000, 120000, 140000],
             'gamma': 0.1,
             'momentum': 0.9,            
-            'max_iter': 160000,
+            'max_iter': 140000,
             'snapshot': 10000,
             'display': 10,
             'average_loss': 10,
             'type': "SGD",            
             
             # Test parameters
-            'test_interval': 160000,
+            'test_interval': 5000,
             },
         'det_out_param' : {
             'nms_param': {'nms_threshold': 0.45, 'top_k': 400},            
