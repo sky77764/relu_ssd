@@ -2,7 +2,7 @@
 
 COPYRIGHT
 
-K Lee, J Jung, N Kwak (Seoul national univ. Korea)
+K Lee, J Jeong, N Kwak (Seoul national univ. Korea)
 All rights reserved.
 
 All contributions compared to the original branch:
