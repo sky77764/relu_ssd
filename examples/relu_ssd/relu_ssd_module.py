@@ -740,20 +740,20 @@ def Train(param, py_file):
     ## conv9_2 ==> 1 x 1
     if input_dim == 300:
         # in percent %
-        min_ratio = 15
+        min_ratio = 20
         max_ratio = 90
-        step = int(math.floor((max_ratio - min_ratio) / (len(resnet_source_layers) - 1)))
+        step = int(math.floor((max_ratio - min_ratio) / (len(resnet_source_layers) - 2)))
         min_sizes = []
         max_sizes = []
         for ratio in xrange(min_ratio, max_ratio + 1, step):
             min_sizes.append(min_dim * ratio / 100.)
             max_sizes.append(min_dim * (ratio + step) / 100.)
-        #min_sizes = [min_dim * 10 / 100.] + min_sizes
-        #max_sizes = [min_dim * 20 / 100.] + max_sizes
+        min_sizes = [min_dim * 10 / 100.] + min_sizes
+        max_sizes = [min_dim * 20 / 100.] + max_sizes
 
         if use_conv3_3:
-            min_sizes = [min_dim * 7 / 100.] + min_sizes
-            max_sizes = [min_dim * 15 / 100.] + max_sizes
+            min_sizes = [min_dim * 5 / 100.] + min_sizes
+            max_sizes = [min_dim * 10 / 100.] + max_sizes
 
         steps = [8, 16, 32, 64, 100, 300]
 
