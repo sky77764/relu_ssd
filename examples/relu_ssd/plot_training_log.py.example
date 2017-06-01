@@ -123,7 +123,7 @@ def plot_chart(chart_type, path_to_png, path_to_log_list):
         linewidth = 0.3
         ## If there too many datapoints, do not use marker.
 ##        use_marker = False
-        use_marker = True
+        use_marker = False
         NUM_MEAN = 500
         mean_label = 'mean (' + str(NUM_MEAN) + ' iterations)'
         mean_linewidth = 1.6
@@ -157,7 +157,7 @@ def plot_chart(chart_type, path_to_png, path_to_log_list):
                         i = i + NUM_MEAN
 
                     plt.plot(mean_x, mean_y, label=mean_label, color=color_r,
-                             linewidth=mean_linewidth)
+                             marker=marker, linewidth=mean_linewidth)
                     ok = True
                 except:
                     pass
