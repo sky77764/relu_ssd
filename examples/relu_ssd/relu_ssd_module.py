@@ -11,8 +11,9 @@ import stat
 import subprocess
 import sys
 
-def Res3Block(net, from_layer, deconv_layer, block_name, 
-        use_branch, branch_param):
+
+def Res3Block(net, from_layer, deconv_layer, block_name,
+              use_branch, branch_param):
     res_layer = []
     if use_branch[0]:
         branch1 = ResBranch(net, from_layer, block_name, "branch1", branch_param[0])
@@ -23,116 +24,118 @@ def Res3Block(net, from_layer, deconv_layer, block_name,
     if use_branch[1]:
         branch2 = ResBranch(net, from_layer, block_name, "branch2", branch_param[1])
         res_layer.append(net[branch2])
-    
+
     if use_branch[2]:
         branch3 = ResBranch(net, deconv_layer, block_name, "branch3", branch_param[2])
         res_layer.append(net[branch3])
 
-    
     res_name = 'res{}'.format(block_name)
-        
+
     if len(res_layer) != 1:
         net[res_name] = L.Eltwise(*res_layer)
         relu_name = '{}_relu'.format(res_name)
         net[relu_name] = L.ReLU(net[res_name], in_place=True)
     else:
         relu_name = '{}_relu'.format(res_name)
-        net[relu_name] = L.ReLU(net[res_layer[0]], in_place=True)
+        net[relu_name] = L.ReLU(res_layer[0], in_place=True)
 
     return relu_name
 
+
 def DeconvBNLayer(net, from_layer, out_layer, use_bn, use_relu, num_output,
-    kernel_size, pad, stride, dilation=1, use_scale=True, lr_mult=1,
-    conv_prefix='', conv_postfix='', bn_prefix='', bn_postfix='_bn',
-    scale_prefix='', scale_postfix='_scale', bias_prefix='', bias_postfix='_bias',
-    **bn_params):
-  if use_bn:
-    # parameters for convolution layer with batchnorm.
-    kwargs = {
-        'param': [dict(lr_mult=lr_mult, decay_mult=1)],
-        'weight_filler': dict(type='gaussian', std=0.01),
-        'bias_term': False,
+                  kernel_size, pad, stride, dilation=1, use_scale=True, lr_mult=1,
+                  conv_prefix='', conv_postfix='', bn_prefix='', bn_postfix='_bn',
+                  scale_prefix='', scale_postfix='_scale', bias_prefix='', bias_postfix='_bias',
+                  **bn_params):
+    if use_bn:
+        # parameters for convolution layer with batchnorm.
+        kwargs = {
+            'param': [dict(lr_mult=lr_mult, decay_mult=1)],
+            'weight_filler': dict(type='gaussian', std=0.01),
+            'bias_term': False,
         }
-    eps = bn_params.get('eps', 0.001)
-    moving_average_fraction = bn_params.get('moving_average_fraction', 0.999)
-    use_global_stats = bn_params.get('use_global_stats', False)
-    # parameters for batchnorm layer.
-    bn_kwargs = {
-        'param': [
-            dict(lr_mult=0, decay_mult=0),
-            dict(lr_mult=0, decay_mult=0),
-            dict(lr_mult=0, decay_mult=0)],
-        'eps': eps,
-        'moving_average_fraction': moving_average_fraction,
+        eps = bn_params.get('eps', 0.001)
+        moving_average_fraction = bn_params.get('moving_average_fraction', 0.999)
+        use_global_stats = bn_params.get('use_global_stats', False)
+        # parameters for batchnorm layer.
+        bn_kwargs = {
+            'param': [
+                dict(lr_mult=0, decay_mult=0),
+                dict(lr_mult=0, decay_mult=0),
+                dict(lr_mult=0, decay_mult=0)],
+            'eps': eps,
+            'moving_average_fraction': moving_average_fraction,
         }
-    bn_lr_mult = lr_mult
-    if use_global_stats:
-      # only specify if use_global_stats is explicitly provided;
-      # otherwise, use_global_stats_ = this->phase_ == TEST;
-      bn_kwargs = {
-          'param': [
-              dict(lr_mult=0, decay_mult=0),
-              dict(lr_mult=0, decay_mult=0),
-              dict(lr_mult=0, decay_mult=0)],
-          'eps': eps,
-          'use_global_stats': use_global_stats,
-          }
-      # not updating scale/bias parameters
-      bn_lr_mult = 0
-    # parameters for scale bias layer after batchnorm.
-    if use_scale:
-      sb_kwargs = {
-          'bias_term': True,
-          'param': [
-              dict(lr_mult=bn_lr_mult, decay_mult=0),
-              dict(lr_mult=bn_lr_mult, decay_mult=0)],
-          'filler': dict(type='constant', value=1.0),
-          'bias_filler': dict(type='constant', value=0.0),
-          }
+        bn_lr_mult = lr_mult
+        if use_global_stats:
+            # only specify if use_global_stats is explicitly provided;
+            # otherwise, use_global_stats_ = this->phase_ == TEST;
+            bn_kwargs = {
+                'param': [
+                    dict(lr_mult=0, decay_mult=0),
+                    dict(lr_mult=0, decay_mult=0),
+                    dict(lr_mult=0, decay_mult=0)],
+                'eps': eps,
+                'use_global_stats': use_global_stats,
+            }
+            # not updating scale/bias parameters
+            bn_lr_mult = 0
+        # parameters for scale bias layer after batchnorm.
+        if use_scale:
+            sb_kwargs = {
+                'bias_term': True,
+                'param': [
+                    dict(lr_mult=bn_lr_mult, decay_mult=0),
+                    dict(lr_mult=bn_lr_mult, decay_mult=0)],
+                'filler': dict(type='constant', value=1.0),
+                'bias_filler': dict(type='constant', value=0.0),
+            }
+        else:
+            bias_kwargs = {
+                'param': [dict(lr_mult=bn_lr_mult, decay_mult=0)],
+                'filler': dict(type='constant', value=0.0),
+            }
     else:
-      bias_kwargs = {
-          'param': [dict(lr_mult=bn_lr_mult, decay_mult=0)],
-          'filler': dict(type='constant', value=0.0),
-          }
-  else:
-    kwargs = {
-        'param': [
-            dict(lr_mult=lr_mult, decay_mult=1),
-            dict(lr_mult=2 * lr_mult, decay_mult=0)],
-        'weight_filler': dict(type='xavier'),
-        'bias_filler': dict(type='constant', value=0)
+        kwargs = {
+            'param': [
+                dict(lr_mult=lr_mult, decay_mult=1),
+                dict(lr_mult=2 * lr_mult, decay_mult=0)],
+            'weight_filler': dict(type='xavier'),
+            'bias_filler': dict(type='constant', value=0)
         }
 
-  conv_name = '{}{}{}'.format(conv_prefix, out_layer, conv_postfix)
-  [kernel_h, kernel_w] = UnpackVariable(kernel_size, 2)
-  [pad_h, pad_w] = UnpackVariable(pad, 2)
-  [stride_h, stride_w] = UnpackVariable(stride, 2)
-  if kernel_h == kernel_w:
-    net[conv_name] = L.Deconvolution(net[from_layer], 
-        convolution_param=dict(num_output=num_output,
-        kernel_size=kernel_h, pad=pad_h, stride=stride_h,
-        weight_filler=dict(type='gaussian', std=0.01),
-        bias_term=False,),
-        param= [dict(lr_mult=lr_mult, decay_mult=1)])
-  else:
-    net[conv_name] = L.Deconvolution(net[from_layer], 
-        convolution_param = dict(num_output=num_output,
-        kernel_h=kernel_h, kernel_w=kernel_w, pad_h=pad_h, pad_w=pad_w,
-        stride_h=stride_h, stride_w=stride_w, **kwargs))
-  if dilation > 1:
-    net.update(conv_name, {'dilation': dilation})
-  if use_bn:
-    bn_name = '{}{}{}'.format(bn_prefix, out_layer, bn_postfix)
-    net[bn_name] = L.BatchNorm(net[conv_name], in_place=True, **bn_kwargs)
-    if use_scale:
-      sb_name = '{}{}{}'.format(scale_prefix, out_layer, scale_postfix)
-      net[sb_name] = L.Scale(net[bn_name], in_place=True, **sb_kwargs)
+    conv_name = '{}{}{}'.format(conv_prefix, out_layer, conv_postfix)
+    [kernel_h, kernel_w] = UnpackVariable(kernel_size, 2)
+    [pad_h, pad_w] = UnpackVariable(pad, 2)
+    [stride_h, stride_w] = UnpackVariable(stride, 2)
+    if kernel_h == kernel_w:
+        net[conv_name] = L.Deconvolution(net[from_layer],
+                                         convolution_param=dict(num_output=num_output,
+                                                                kernel_size=kernel_h, pad=pad_h, stride=stride_h,
+                                                                weight_filler=dict(type='gaussian', std=0.01),
+                                                                bias_term=False, ),
+                                         param=[dict(lr_mult=lr_mult, decay_mult=1)])
     else:
-      bias_name = '{}{}{}'.format(bias_prefix, out_layer, bias_postfix)
-      net[bias_name] = L.Bias(net[bn_name], in_place=True, **bias_kwargs)
-  if use_relu:
-    relu_name = '{}_relu'.format(conv_name)
-    net[relu_name] = L.ReLU(net[conv_name], in_place=True)
+        net[conv_name] = L.Deconvolution(net[from_layer],
+                                         convolution_param=dict(num_output=num_output,
+                                                                kernel_h=kernel_h, kernel_w=kernel_w, pad_h=pad_h,
+                                                                pad_w=pad_w,
+                                                                stride_h=stride_h, stride_w=stride_w, **kwargs))
+    if dilation > 1:
+        net.update(conv_name, {'dilation': dilation})
+    if use_bn:
+        bn_name = '{}{}{}'.format(bn_prefix, out_layer, bn_postfix)
+        net[bn_name] = L.BatchNorm(net[conv_name], in_place=True, **bn_kwargs)
+        if use_scale:
+            sb_name = '{}{}{}'.format(scale_prefix, out_layer, scale_postfix)
+            net[sb_name] = L.Scale(net[bn_name], in_place=True, **sb_kwargs)
+        else:
+            bias_name = '{}{}{}'.format(bias_prefix, out_layer, bias_postfix)
+            net[bias_name] = L.Bias(net[bn_name], in_place=True, **bias_kwargs)
+    if use_relu:
+        relu_name = '{}_relu'.format(conv_name)
+        net[relu_name] = L.ReLU(net[conv_name], in_place=True)
+
 
 def ResBranch(net, from_layer, block_name, branch_prefix, layer_param, **bn_params):
     conv_prefix = 'res{}_'.format(block_name)
@@ -153,15 +156,15 @@ def ResBranch(net, from_layer, block_name, branch_prefix, layer_param, **bn_para
     out_name = from_layer
 
     for param in layer_param:
-        
+
         branch_name = branch_prefix + name_postfix[id]
         id += 1
 
-        num_output=param['out']
-        kernel_size=param['kernel_size']
-        pad=param['pad']
-        stride=param['stride']
-        use_relu= id is not num_layers
+        num_output = param['out']
+        kernel_size = param['kernel_size']
+        pad = param['pad']
+        stride = param['stride']
+        use_relu = id is not num_layers
 
         if param['name'] == 'Convolution':
             functor = ConvBNLayer
@@ -175,8 +178,9 @@ def ResBranch(net, from_layer, block_name, branch_prefix, layer_param, **bn_para
                 scale_prefix=scale_prefix, scale_postfix=scale_postfix, **bn_params)
 
         out_name = '{}{}'.format(conv_prefix, branch_name)
-        
+
     return out_name
+
 
 # Add extra layers on top of a "base" network (e.g. VGGNet or Inception).
 def AddExtraLayers(net, use_batchnorm=True, lr_mult=1, use_conv10=False):
@@ -190,155 +194,157 @@ def AddExtraLayers(net, use_batchnorm=True, lr_mult=1, use_conv10=False):
     # 10 x 10
     out_layer = "conv6_1"
     ConvBNLayer(net, from_layer, out_layer, use_batchnorm, use_relu, 256, 1, 0, 1,
-        lr_mult=lr_mult)
+                lr_mult=lr_mult)
 
     from_layer = out_layer
     out_layer = "conv6_2"
     ConvBNLayer(net, from_layer, out_layer, use_batchnorm, use_relu, 512, 3, 1, 2,
-        lr_mult=lr_mult)
+                lr_mult=lr_mult)
 
     # 5 x 5
     from_layer = out_layer
     out_layer = "conv7_1"
     ConvBNLayer(net, from_layer, out_layer, use_batchnorm, use_relu, 128, 1, 0, 1,
-      lr_mult=lr_mult)
+                lr_mult=lr_mult)
 
     from_layer = out_layer
     out_layer = "conv7_2"
     ConvBNLayer(net, from_layer, out_layer, use_batchnorm, use_relu, 256, 3, 1, 2,
-      lr_mult=lr_mult)
+                lr_mult=lr_mult)
 
     # 3 x 3
     from_layer = out_layer
     out_layer = "conv8_1"
     ConvBNLayer(net, from_layer, out_layer, use_batchnorm, use_relu, 128, 1, 0, 1,
-      lr_mult=lr_mult)
+                lr_mult=lr_mult)
 
     from_layer = out_layer
     out_layer = "conv8_2"
     ConvBNLayer(net, from_layer, out_layer, use_batchnorm, use_relu, 256, 3, 0, 1,
-      lr_mult=lr_mult)
+                lr_mult=lr_mult)
 
     # 1 x 1
     from_layer = out_layer
     out_layer = "conv9_1"
     ConvBNLayer(net, from_layer, out_layer, use_batchnorm, use_relu, 128, 1, 0, 1,
-      lr_mult=lr_mult)
+                lr_mult=lr_mult)
 
     from_layer = out_layer
     out_layer = "conv9_2"
     ConvBNLayer(net, from_layer, out_layer, use_batchnorm, use_relu, 256, 3, 0, 1,
-      lr_mult=lr_mult)
+                lr_mult=lr_mult)
 
     if use_conv10:
         from_layer = out_layer
         out_layer = "conv10_1"
         ConvBNLayer(net, from_layer, out_layer, use_batchnorm, use_relu, 128, 1, 0, 1,
-        lr_mult=lr_mult)
+                    lr_mult=lr_mult)
 
         from_layer = out_layer
         out_layer = "conv10_2"
         ConvBNLayer(net, from_layer, out_layer, use_batchnorm, use_relu, 256, 4, 1, 1,
-        lr_mult=lr_mult)
+                    lr_mult=lr_mult)
 
     return net
 
-def AddResidualLayers(net, out_dim, 
-        use_branch1, use_branch2, use_branch3, use_conv3_3 = False):    
 
+def AddResidualLayers(net, out_dim,
+                      use_branch1, use_branch2, use_branch3, use_conv3_3=False):
     out_layers = []
 
-    branch1_type1 = [{'name': "Convolution", 'out': out_dim, 'kernel_size': 1, 'pad': 0, 'stride': 1,}]
-    
+    branch1_type1 = [{'name': "Convolution", 'out': out_dim, 'kernel_size': 1, 'pad': 0, 'stride': 1, }]
+
     branch2_type1 = [
-        {'name': "Convolution", 'out': out_dim/4, 'kernel_size': 1, 'pad': 0, 'stride': 1,},
-        {'name': "Convolution", 'out': out_dim/4, 'kernel_size': 3, 'pad': 1, 'stride': 1,},
-        {'name': "Convolution", 'out': out_dim, 'kernel_size': 1, 'pad': 0, 'stride': 1,}
-        ]
+        {'name': "Convolution", 'out': out_dim / 4, 'kernel_size': 1, 'pad': 0, 'stride': 1, },
+        {'name': "Convolution", 'out': out_dim / 4, 'kernel_size': 3, 'pad': 1, 'stride': 1, },
+        {'name': "Convolution", 'out': out_dim, 'kernel_size': 1, 'pad': 0, 'stride': 1, }
+    ]
 
     branch2_type2 = [
-        {'name': "Convolution", 'out': out_dim, 'kernel_size': 3, 'pad': 1, 'stride': 1,},
-        {'name': "Convolution", 'out': out_dim, 'kernel_size': 3, 'pad': 1, 'stride': 1,}
-        ]
-    
+        {'name': "Convolution", 'out': out_dim, 'kernel_size': 3, 'pad': 1, 'stride': 1, },
+        {'name': "Convolution", 'out': out_dim, 'kernel_size': 3, 'pad': 1, 'stride': 1, }
+    ]
+
     branch3_type1 = [
-        {'name': "Convolution", 'out': out_dim/4, 'kernel_size': 3, 'pad': 1, 'stride': 1,},
-        {'name': "Deconvolution", 'out': out_dim/4,},
-        {'name': "Convolution", 'out': out_dim, 'kernel_size': 1, 'pad': 0, 'stride': 1,}
+        {'name': "Convolution", 'out': out_dim / 4, 'kernel_size': 3, 'pad': 1, 'stride': 1, },
+        {'name': "Deconvolution", 'out': out_dim / 4, },
+        {'name': "Convolution", 'out': out_dim, 'kernel_size': 1, 'pad': 0, 'stride': 1, }
+    ]
+    branch3_type2 = [
+        {'name': "Deconvolution", 'out': out_dim / 4, },
+        {'name': "Convolution", 'out': out_dim / 4, 'kernel_size': 3, 'pad': 1, 'stride': 1, },
+        {'name': "Convolution", 'out': out_dim, 'kernel_size': 1, 'pad': 0, 'stride': 1, }
     ]
 
     branch1_param = branch1_type1
     branch2_param = branch2_type2
-    branch3_param = branch3_type1   
+    branch3_param = branch3_type2
 
-    deconv_param = branch3_param[1]             
+    deconv_param = branch3_param[0]
 
     use_branch = [use_branch1, use_branch2, use_branch3]
     branch_param = [branch1_param, branch2_param, branch3_param]
-    
 
     out_layers = []
 
-    # 3_3  
+    # 3_3
     if use_conv3_3:
         from_layer = "conv3_3"
         deconv_layer = "conv4_3"
         block_name = "3_3"
-        deconv_param.update({'kernel_size': 2, 'pad': 0, 'stride': 2,})
-        out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)    
+        deconv_param.update({'kernel_size': 2, 'pad': 0, 'stride': 2, })
+        out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)
         out_layers.append(out_layer)
-    
-    
-    
+
     from_layer = "conv4_3"
     deconv_layer = "fc7"
     block_name = "4_3"
-    deconv_param.update({'kernel_size': 2, 'pad': 0, 'stride': 2,})
-    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)    
+    deconv_param.update({'kernel_size': 2, 'pad': 0, 'stride': 2, })
+    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)
     out_layers.append(out_layer)
-
 
     from_layer = "fc7"
     deconv_layer = "conv6_2"
     block_name = "fc7"
-    deconv_param.update({'kernel_size': 3, 'pad': 1, 'stride': 2,})
-    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)    
+    deconv_param.update({'kernel_size': 3, 'pad': 1, 'stride': 2, })
+    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)
     out_layers.append(out_layer)
-     
+
     from_layer = "conv6_2"
     deconv_layer = "conv7_2"
     block_name = "6_2"
-    deconv_param.update({'kernel_size': 2, 'pad': 0, 'stride': 2,})
-    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)    
-    out_layers.append(out_layer)   
+    deconv_param.update({'kernel_size': 2, 'pad': 0, 'stride': 2, })
+    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)
+    out_layers.append(out_layer)
 
     from_layer = "conv7_2"
     deconv_layer = "conv8_2"
     block_name = "7_2"
-    deconv_param.update({'kernel_size': 3, 'pad': 0, 'stride': 1,})
-    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)    
-    out_layers.append(out_layer)   
+    deconv_param.update({'kernel_size': 3, 'pad': 0, 'stride': 1, })
+    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)
+    out_layers.append(out_layer)
 
     from_layer = "conv8_2"
     deconv_layer = "conv9_2"
     block_name = "8_2"
-    deconv_param.update({'kernel_size': 3, 'pad': 0, 'stride': 1,})
-    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)    
-    out_layers.append(out_layer)  
+    deconv_param.update({'kernel_size': 3, 'pad': 0, 'stride': 1, })
+    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, use_branch, branch_param)
+    out_layers.append(out_layer)
 
     from_layer = "conv9_2"
     block_name = "9_2"
-    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, [True, True, False], branch_param)    
-    out_layers.append(out_layer)     
+    out_layer = Res3Block(net, from_layer, deconv_layer, block_name, [use_branch1, use_branch2, False], branch_param)
+    out_layers.append(out_layer)
 
     return out_layers
 
+
 def CreateUnifiedPredictionHead(net, data_layer="data", num_classes=[], from_layers=[],
-        use_objectness=False, normalizations=[], use_batchnorm=True, lr_mult=1,
-        use_scale=True, min_sizes=[], max_sizes=[], prior_variance = [0.1],
-        aspect_ratios=[], steps=[], img_height=0, img_width=0, share_location=True,
-        flip=True, clip=True, offset=0.5, inter_layer_depth=[], kernel_size=1, pad=0,
-        conf_postfix='', loc_postfix='', **bn_param):
+                                use_objectness=False, normalizations=[], use_batchnorm=True, lr_mult=1,
+                                use_scale=True, min_sizes=[], max_sizes=[], prior_variance=[0.1],
+                                aspect_ratios=[], steps=[], img_height=0, img_width=0, share_location=True,
+                                flip=True, clip=True, offset=0.5, inter_layer_depth=[], kernel_size=1, pad=0,
+                                conf_postfix='', loc_postfix='', **bn_param):
     assert num_classes, "must provide num_classes"
     assert num_classes > 0, "num_classes must be positive number"
     if normalizations:
@@ -367,7 +373,7 @@ def CreateUnifiedPredictionHead(net, data_layer="data", num_classes=[], from_lay
             dict(name='loc_p2', lr_mult=2 * lr_mult, decay_mult=0)],
         'weight_filler': dict(type='xavier'),
         'bias_filler': dict(type='constant', value=0)
-        }
+    }
 
     conf_args = {
         'param': [
@@ -375,21 +381,21 @@ def CreateUnifiedPredictionHead(net, data_layer="data", num_classes=[], from_lay
             dict(name='conf_p2', lr_mult=2 * lr_mult, decay_mult=0)],
         'weight_filler': dict(type='xavier'),
         'bias_filler': dict(type='constant', value=0)
-        }
+    }
 
     if flip:
-            num_priors_per_location = 6
-    else :
-            num_priors_per_location = 3
+        num_priors_per_location = 6
+    else:
+        num_priors_per_location = 3
 
     for i in range(0, num):
         from_layer = from_layers[i]
 
         name = "{}_mbox_loc{}".format(from_layer, loc_postfix)
-        
+
         # Create location prediction layer.
-        net[name] = L.Convolution(net[from_layer], num_output=num_priors_per_location * 4, 
-                pad=1, kernel_size=3, stride=1, **loc_args)
+        net[name] = L.Convolution(net[from_layer], num_output=num_priors_per_location * 4,
+                                  pad=1, kernel_size=3, stride=1, **loc_args)
         permute_name = "{}_perm".format(name)
         net[permute_name] = L.Permute(net[name], order=[0, 2, 3, 1])
         flatten_name = "{}_flat".format(name)
@@ -398,8 +404,8 @@ def CreateUnifiedPredictionHead(net, data_layer="data", num_classes=[], from_lay
 
         # Create confidence prediction layer.
         name = "{}_mbox_conf{}".format(from_layer, conf_postfix)
-        net[name] = L.Convolution(net[from_layer], num_output=num_priors_per_location * num_classes, 
-                pad=1, kernel_size=3, stride=1, **conf_args)
+        net[name] = L.Convolution(net[from_layer], num_output=num_priors_per_location * num_classes,
+                                  pad=1, kernel_size=3, stride=1, **conf_args)
 
         permute_name = "{}_perm".format(name)
         net[permute_name] = L.Permute(net[name], order=[0, 2, 3, 1])
@@ -436,7 +442,7 @@ def CreateUnifiedPredictionHead(net, data_layer="data", num_classes=[], from_lay
         # Create prior generation layer.
         name = "{}_mbox_priorbox".format(from_layer)
         net[name] = L.PriorBox(net[from_layer], net[data_layer], min_size=min_size,
-                clip=clip, variance=prior_variance, offset=offset)
+                               clip=clip, variance=prior_variance, offset=offset)
         if max_size:
             net.update(name, {'max_size': max_size})
         if aspect_ratio:
@@ -455,7 +461,7 @@ def CreateUnifiedPredictionHead(net, data_layer="data", num_classes=[], from_lay
             name = "{}_mbox_objectness".format(from_layer)
             num_obj_output = num_priors_per_location * 2;
             ConvBNLayer(net, from_layer, name, use_bn=use_batchnorm, use_relu=False, lr_mult=lr_mult,
-                num_output=num_obj_output, kernel_size=kernel_size, pad=pad, stride=1, **bn_param)
+                        num_output=num_obj_output, kernel_size=kernel_size, pad=pad, stride=1, **bn_param)
             permute_name = "{}_perm".format(name)
             net[permute_name] = L.Permute(net[name], order=[0, 2, 3, 1])
             flatten_name = "{}_flat".format(name)
@@ -479,6 +485,7 @@ def CreateUnifiedPredictionHead(net, data_layer="data", num_classes=[], from_lay
         mbox_layers.append(net[name])
 
     return mbox_layers
+
 
 def Train(param, py_file):
     ### Modify the following parameters accordingly ###
@@ -506,138 +513,138 @@ def Train(param, py_file):
     resize_height = input_dim
     resize = "{}x{}".format(resize_width, resize_height)
     batch_sampler = [
-            {
-                    'sampler': {
-                            },
-                    'max_trials': 1,
-                    'max_sample': 1,
+        {
+            'sampler': {
             },
-            {
-                    'sampler': {
-                            'min_scale': 0.3,
-                            'max_scale': 1.0,
-                            'min_aspect_ratio': 0.5,
-                            'max_aspect_ratio': 2.0,
-                            },
-                    'sample_constraint': {
-                            'min_jaccard_overlap': 0.1,
-                            },
-                    'max_trials': 50,
-                    'max_sample': 1,
+            'max_trials': 1,
+            'max_sample': 1,
+        },
+        {
+            'sampler': {
+                'min_scale': 0.3,
+                'max_scale': 1.0,
+                'min_aspect_ratio': 0.5,
+                'max_aspect_ratio': 2.0,
             },
-            {
-                    'sampler': {
-                            'min_scale': 0.3,
-                            'max_scale': 1.0,
-                            'min_aspect_ratio': 0.5,
-                            'max_aspect_ratio': 2.0,
-                            },
-                    'sample_constraint': {
-                            'min_jaccard_overlap': 0.3,
-                            },
-                    'max_trials': 50,
-                    'max_sample': 1,
+            'sample_constraint': {
+                'min_jaccard_overlap': 0.1,
             },
-            {
-                    'sampler': {
-                            'min_scale': 0.3,
-                            'max_scale': 1.0,
-                            'min_aspect_ratio': 0.5,
-                            'max_aspect_ratio': 2.0,
-                            },
-                    'sample_constraint': {
-                            'min_jaccard_overlap': 0.5,
-                            },
-                    'max_trials': 50,
-                    'max_sample': 1,
+            'max_trials': 50,
+            'max_sample': 1,
+        },
+        {
+            'sampler': {
+                'min_scale': 0.3,
+                'max_scale': 1.0,
+                'min_aspect_ratio': 0.5,
+                'max_aspect_ratio': 2.0,
             },
-            {
-                    'sampler': {
-                            'min_scale': 0.3,
-                            'max_scale': 1.0,
-                            'min_aspect_ratio': 0.5,
-                            'max_aspect_ratio': 2.0,
-                            },
-                    'sample_constraint': {
-                            'min_jaccard_overlap': 0.7,
-                            },
-                    'max_trials': 50,
-                    'max_sample': 1,
+            'sample_constraint': {
+                'min_jaccard_overlap': 0.3,
             },
-            {
-                    'sampler': {
-                            'min_scale': 0.3,
-                            'max_scale': 1.0,
-                            'min_aspect_ratio': 0.5,
-                            'max_aspect_ratio': 2.0,
-                            },
-                    'sample_constraint': {
-                            'min_jaccard_overlap': 0.9,
-                            },
-                    'max_trials': 50,
-                    'max_sample': 1,
+            'max_trials': 50,
+            'max_sample': 1,
+        },
+        {
+            'sampler': {
+                'min_scale': 0.3,
+                'max_scale': 1.0,
+                'min_aspect_ratio': 0.5,
+                'max_aspect_ratio': 2.0,
             },
-            {
-                    'sampler': {
-                            'min_scale': 0.3,
-                            'max_scale': 1.0,
-                            'min_aspect_ratio': 0.5,
-                            'max_aspect_ratio': 2.0,
-                            },
-                    'sample_constraint': {
-                            'max_jaccard_overlap': 1.0,
-                            },
-                    'max_trials': 50,
-                    'max_sample': 1,
+            'sample_constraint': {
+                'min_jaccard_overlap': 0.5,
             },
-            ]
+            'max_trials': 50,
+            'max_sample': 1,
+        },
+        {
+            'sampler': {
+                'min_scale': 0.3,
+                'max_scale': 1.0,
+                'min_aspect_ratio': 0.5,
+                'max_aspect_ratio': 2.0,
+            },
+            'sample_constraint': {
+                'min_jaccard_overlap': 0.7,
+            },
+            'max_trials': 50,
+            'max_sample': 1,
+        },
+        {
+            'sampler': {
+                'min_scale': 0.3,
+                'max_scale': 1.0,
+                'min_aspect_ratio': 0.5,
+                'max_aspect_ratio': 2.0,
+            },
+            'sample_constraint': {
+                'min_jaccard_overlap': 0.9,
+            },
+            'max_trials': 50,
+            'max_sample': 1,
+        },
+        {
+            'sampler': {
+                'min_scale': 0.3,
+                'max_scale': 1.0,
+                'min_aspect_ratio': 0.5,
+                'max_aspect_ratio': 2.0,
+            },
+            'sample_constraint': {
+                'max_jaccard_overlap': 1.0,
+            },
+            'max_trials': 50,
+            'max_sample': 1,
+        },
+    ]
     train_transform_param = {
-            'mirror': True,
-            'mean_value': [104, 117, 123],
-            'resize_param': {
-                    'prob': 1,
-                    'resize_mode': P.Resize.WARP,
-                    'height': resize_height,
-                    'width': resize_width,
-                    'interp_mode': [
-                            P.Resize.LINEAR,
-                            P.Resize.AREA,
-                            P.Resize.NEAREST,
-                            P.Resize.CUBIC,
-                            P.Resize.LANCZOS4,
-                            ],
-                    },
-            'distort_param': {
-                    'brightness_prob': 0.5,
-                    'brightness_delta': 32,
-                    'contrast_prob': 0.5,
-                    'contrast_lower': 0.5,
-                    'contrast_upper': 1.5,
-                    'hue_prob': 0.5,
-                    'hue_delta': 18,
-                    'saturation_prob': 0.5,
-                    'saturation_lower': 0.5,
-                    'saturation_upper': 1.5,
-                    'random_order_prob': 0.0,
-                    },
-            'expand_param': {
-                    'prob': 0.5,
-                    'max_expand_ratio': 4.0,
-                    },
-            'emit_constraint': {
-                'emit_type': caffe_pb2.EmitConstraint.CENTER,
-                }
-            }
+        'mirror': True,
+        'mean_value': [104, 117, 123],
+        'resize_param': {
+            'prob': 1,
+            'resize_mode': P.Resize.WARP,
+            'height': resize_height,
+            'width': resize_width,
+            'interp_mode': [
+                P.Resize.LINEAR,
+                P.Resize.AREA,
+                P.Resize.NEAREST,
+                P.Resize.CUBIC,
+                P.Resize.LANCZOS4,
+            ],
+        },
+        'distort_param': {
+            'brightness_prob': 0.5,
+            'brightness_delta': 32,
+            'contrast_prob': 0.5,
+            'contrast_lower': 0.5,
+            'contrast_upper': 1.5,
+            'hue_prob': 0.5,
+            'hue_delta': 18,
+            'saturation_prob': 0.5,
+            'saturation_lower': 0.5,
+            'saturation_upper': 1.5,
+            'random_order_prob': 0.0,
+        },
+        'expand_param': {
+            'prob': 0.5,
+            'max_expand_ratio': 4.0,
+        },
+        'emit_constraint': {
+            'emit_type': caffe_pb2.EmitConstraint.CENTER,
+        }
+    }
     test_transform_param = {
-            'mean_value': [104, 117, 123],
-            'resize_param': {
-                    'prob': 1,
-                    'resize_mode': P.Resize.WARP,
-                    'height': resize_height,
-                    'width': resize_width,
-                    'interp_mode': [P.Resize.LINEAR],
-                    },
-            }
+        'mean_value': [104, 117, 123],
+        'resize_param': {
+            'prob': 1,
+            'resize_mode': P.Resize.WARP,
+            'height': resize_height,
+            'width': resize_width,
+            'interp_mode': [P.Resize.LINEAR],
+        },
+    }
 
     # If true, use batch norm for all newly added layers.
     # Currently only the non batch norm version has been tested.
@@ -652,9 +659,9 @@ def Train(param, py_file):
 
     residual_feature_depth = param['residual_feature_depth']
 
-
     # Modify the job name if you want.
-    job_name = param['net_name'] + "_{}_res{}{}".format(resize, residual_feature_depth, "_Conv3" if param['use_conv3_3'] else "")
+    job_name = param['net_name'] + "_{}_res{}{}".format(resize, residual_feature_depth,
+                                                        "_Conv3" if param['use_conv3_3'] else "")
     # The name of the model. Modify it if you want.
     model_name = "VGG_{}_{}".format(data_set, job_name)
 
@@ -689,7 +696,7 @@ def Train(param, py_file):
         num_classes = 21
 
     share_location = True
-    background_label_id=0
+    background_label_id = 0
     train_on_diff_gt = True
     normalization_mode = P.Loss.VALID
     code_type = P.PriorBox.CENTER_SIZE
@@ -713,10 +720,10 @@ def Train(param, py_file):
         'neg_overlap': 0.5,
         'code_type': code_type,
         'ignore_cross_boundary_bbox': ignore_cross_boundary_bbox,
-        }
+    }
     loss_param = {
         'normalization': normalization_mode,
-        }
+    }
 
     # parameters for generating priors.
     # minimum dimension of input image
@@ -731,7 +738,7 @@ def Train(param, py_file):
     else:
         use_conv10 = False
 
-    # 300x300 
+    # 300x300
     ## conv4_3 ==> 38 x 38
     ## fc7 ==> 19 x 19
     ## conv6_2 ==> 10 x 10
@@ -766,7 +773,7 @@ def Train(param, py_file):
     ## conv9_2 ==> 2 x 2
     ## conv10_2 ==> 1 x 1
     elif input_dim == 512:
-        
+
         # in percent %
         min_ratio = 15
         max_ratio = 90
@@ -788,10 +795,10 @@ def Train(param, py_file):
     if use_conv3_3:
         resnet_source_layers = ['conv3_3'] + resnet_source_layers
         steps = [4] + steps
-    
+
     aspect_ratios = [[2, 3] for i in range(0, len(resnet_source_layers))]
     normalizations = [-1 for i in range(0, len(resnet_source_layers))]
-    
+
     # variance used to encode/decode prior bboxes.
     if code_type == P.PriorBox.CENTER_SIZE:
         prior_variance = [0.1, 0.1, 0.2, 0.2]
@@ -859,7 +866,7 @@ def Train(param, py_file):
         'eval_type': "detection",
         'ap_version': "11point",
         'test_initialization': False,
-        }
+    }
 
     solver_param.update(param['solver_param'])
 
@@ -876,11 +883,11 @@ def Train(param, py_file):
             'label_map_file': label_map_file,
             'name_size_file': name_size_file,
             'num_test_image': num_test_image,
-            },
+        },
         'keep_top_k': 200,
         'confidence_threshold': 0.01,
         'code_type': code_type,
-        }
+    }
 
     det_out_param.update(param['det_out_param'])
 
@@ -891,7 +898,7 @@ def Train(param, py_file):
         'overlap_threshold': 0.5,
         'evaluate_difficult_gt': False,
         'name_size_file': name_size_file,
-        }
+    }
 
     ### Hopefully you don't need to change the following ###
     # Check file.
@@ -906,38 +913,40 @@ def Train(param, py_file):
     # Create train net.
     net = caffe.NetSpec()
     net.data, net.label = CreateAnnotatedDataLayer(train_data, batch_size=batch_size_per_device,
-            train=True, output_label=True, label_map_file=label_map_file,
-            transform_param=train_transform_param, batch_sampler=batch_sampler)
+                                                   train=True, output_label=True, label_map_file=label_map_file,
+                                                   transform_param=train_transform_param, batch_sampler=batch_sampler)
 
     VGGNetBody(net, from_layer='data', fully_conv=True, reduced=True, dilated=True,
-        dropout=False)
+               dropout=False)
 
     AddExtraLayers(net, use_batchnorm, lr_mult=lr_mult, use_conv10=use_conv10)
 
     use_branch2 = param['use_res_branch2']
     use_branch3 = param['use_res_deconv']
 
-    mbox_source_layers = AddResidualLayers(net,residual_feature_depth, True, use_branch2, use_branch3, use_conv3_3)
+    mbox_source_layers = AddResidualLayers(net, residual_feature_depth, True, use_branch2, use_branch3, use_conv3_3)
 
     if not param["use_unified_prediction"]:
         mbox_layers = CreateMultiBoxHead(net, data_layer='data', from_layers=mbox_source_layers,
-                use_batchnorm=use_batchnorm, min_sizes=min_sizes, max_sizes=max_sizes,
-                aspect_ratios=aspect_ratios, steps=steps, normalizations=normalizations,
-                num_classes=num_classes, share_location=share_location, flip=flip, clip=clip,
-                prior_variance=prior_variance, kernel_size=3, pad=1, lr_mult=lr_mult)
+                                         use_batchnorm=use_batchnorm, min_sizes=min_sizes, max_sizes=max_sizes,
+                                         aspect_ratios=aspect_ratios, steps=steps, normalizations=normalizations,
+                                         num_classes=num_classes, share_location=share_location, flip=flip, clip=clip,
+                                         prior_variance=prior_variance, kernel_size=3, pad=1, lr_mult=lr_mult)
     else:
         mbox_layers = CreateUnifiedPredictionHead(net, data_layer='data', from_layers=mbox_source_layers,
-                use_batchnorm=use_batchnorm, min_sizes=min_sizes, max_sizes=max_sizes,
-                aspect_ratios=aspect_ratios, steps=steps, normalizations=normalizations,
-                num_classes=num_classes, share_location=share_location, flip=flip, clip=clip,
-                prior_variance=prior_variance, kernel_size=3, pad=1, lr_mult=lr_mult)
+                                                  use_batchnorm=use_batchnorm, min_sizes=min_sizes, max_sizes=max_sizes,
+                                                  aspect_ratios=aspect_ratios, steps=steps,
+                                                  normalizations=normalizations,
+                                                  num_classes=num_classes, share_location=share_location, flip=flip,
+                                                  clip=clip,
+                                                  prior_variance=prior_variance, kernel_size=3, pad=1, lr_mult=lr_mult)
 
     # Create the MultiBoxLossLayer.
     name = "mbox_loss"
     mbox_layers.append(net.label)
     net[name] = L.MultiBoxLoss(*mbox_layers, multibox_loss_param=multibox_loss_param,
-            loss_param=loss_param, include=dict(phase=caffe_pb2.Phase.Value('TRAIN')),
-            propagate_down=[True, True, False, False])
+                               loss_param=loss_param, include=dict(phase=caffe_pb2.Phase.Value('TRAIN')),
+                               propagate_down=[True, True, False, False])
 
     with open(train_net_file, 'w') as f:
         print('name: "{}_train"'.format(model_name), file=f)
@@ -947,28 +956,30 @@ def Train(param, py_file):
     # Create test net.
     net = caffe.NetSpec()
     net.data, net.label = CreateAnnotatedDataLayer(test_data, batch_size=test_batch_size,
-            train=False, output_label=True, label_map_file=label_map_file,
-            transform_param=test_transform_param)
+                                                   train=False, output_label=True, label_map_file=label_map_file,
+                                                   transform_param=test_transform_param)
 
     VGGNetBody(net, from_layer='data', fully_conv=True, reduced=True, dilated=True,
-        dropout=False)
+               dropout=False)
 
     AddExtraLayers(net, use_batchnorm, lr_mult=lr_mult, use_conv10=use_conv10)
 
-    mbox_source_layers = AddResidualLayers(net,residual_feature_depth, True, use_branch2, use_branch3, use_conv3_3)
+    mbox_source_layers = AddResidualLayers(net, residual_feature_depth, True, use_branch2, use_branch3, use_conv3_3)
 
     if not param["use_unified_prediction"]:
         mbox_layers = CreateMultiBoxHead(net, data_layer='data', from_layers=mbox_source_layers,
-                use_batchnorm=use_batchnorm, min_sizes=min_sizes, max_sizes=max_sizes,
-                aspect_ratios=aspect_ratios, steps=steps, normalizations=normalizations,
-                num_classes=num_classes, share_location=share_location, flip=flip, clip=clip,
-                prior_variance=prior_variance, kernel_size=3, pad=1, lr_mult=lr_mult)
+                                         use_batchnorm=use_batchnorm, min_sizes=min_sizes, max_sizes=max_sizes,
+                                         aspect_ratios=aspect_ratios, steps=steps, normalizations=normalizations,
+                                         num_classes=num_classes, share_location=share_location, flip=flip, clip=clip,
+                                         prior_variance=prior_variance, kernel_size=3, pad=1, lr_mult=lr_mult)
     else:
         mbox_layers = CreateUnifiedPredictionHead(net, data_layer='data', from_layers=mbox_source_layers,
-                use_batchnorm=use_batchnorm, min_sizes=min_sizes, max_sizes=max_sizes,
-                aspect_ratios=aspect_ratios, steps=steps, normalizations=normalizations,
-                num_classes=num_classes, share_location=share_location, flip=flip, clip=clip,
-                prior_variance=prior_variance, kernel_size=3, pad=1, lr_mult=lr_mult)
+                                                  use_batchnorm=use_batchnorm, min_sizes=min_sizes, max_sizes=max_sizes,
+                                                  aspect_ratios=aspect_ratios, steps=steps,
+                                                  normalizations=normalizations,
+                                                  num_classes=num_classes, share_location=share_location, flip=flip,
+                                                  clip=clip,
+                                                  prior_variance=prior_variance, kernel_size=3, pad=1, lr_mult=lr_mult)
 
     conf_name = "mbox_conf"
     if multibox_loss_param["conf_loss_type"] == P.MultiBoxLoss.SOFTMAX:
@@ -985,11 +996,11 @@ def Train(param, py_file):
         mbox_layers[1] = net[sigmoid_name]
 
     net.detection_out = L.DetectionOutput(*mbox_layers,
-        detection_output_param=det_out_param,
-        include=dict(phase=caffe_pb2.Phase.Value('TEST')))
+                                          detection_output_param=det_out_param,
+                                          include=dict(phase=caffe_pb2.Phase.Value('TEST')))
     net.detection_eval = L.DetectionEvaluate(net.detection_out, net.label,
-        detection_evaluate_param=det_eval_param,
-        include=dict(phase=caffe_pb2.Phase.Value('TEST')))
+                                             detection_evaluate_param=det_eval_param,
+                                             include=dict(phase=caffe_pb2.Phase.Value('TEST')))
 
     with open(test_net_file, 'w') as f:
         print('name: "{}_test"'.format(model_name), file=f)
@@ -1013,10 +1024,10 @@ def Train(param, py_file):
 
     # Create solver.
     solver = caffe_pb2.SolverParameter(
-            train_net=train_net_file,
-            test_net=[test_net_file],
-            snapshot_prefix=snapshot_prefix,
-            **solver_param)
+        train_net=train_net_file,
+        test_net=[test_net_file],
+        snapshot_prefix=snapshot_prefix,
+        **solver_param)
 
     with open(solver_file, 'w') as f:
         print(solver, file=f)
@@ -1037,7 +1048,7 @@ def Train(param, py_file):
             train_src_param = '--snapshot="{}_iter_{}.solverstate" \\\n'.format(snapshot_prefix, max_iter)
 
     if remove_old_models:
-    # Remove any snapshots smaller than max_iter.
+        # Remove any snapshots smaller than max_iter.
         for file in os.listdir(snapshot_dir):
             if file.endswith(".solverstate"):
                 basename = os.path.splitext(file)[0]
